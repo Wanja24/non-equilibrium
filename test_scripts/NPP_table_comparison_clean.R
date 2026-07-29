@@ -8,23 +8,30 @@ library(jsonlite)
 library(viridis)
 library(dplyr)
 
-setwd("~/Library/CloudStorage/OneDrive-LeuphanaUniversity/Research/Non-equilibrium/scripts")
+setwd("/Volumes/TOSHIBA EXT/non-equilibrium/data")
 
 ############################################################
 # LOAD RASTERS (MODIS + WGS84 REPROJECTED) 
 # & EXPORTED TABLE (EE SAMPLE OUTPUT)
 ############################################################
 
-npp_modis_tif <- rast("NPP_2001-01-01.tif") # NPP_test_17_06_modis.tif, NPP_5km_2001_1_test_24_06_modis.tif, NPP_5km_2001_1_wholeworld_25_06.tif
-npp_wgs84_tif <- rast("NPP_test_17_06_wgs84.tif")
-df_ee <- read.csv("NPP_5km_2001_1_smallregion_25_06.csv") # "NPP_test_17_06_modis_wgs84latlon.csv"
+npp_modis_tif <- rast("npp/NPP_2011-01-01.tif") # NPP_test_17_06_modis.tif, NPP_5km_2001_1_test_24_06_modis.tif, NPP_5km_2001_1_wholeworld_25_06.tif
+npp_wgs84_tif <- rast("test/NPP_test_17_06_wgs84.tif")
+df_ee <- read.csv("test/NPP_5km_2001_1_smallregion_25_06.csv") # "NPP_test_17_06_modis_wgs84latlon.csv"
 world_borders <- vect("world-administrative-boundaries/world-administrative-boundaries.shp")
-region_ee <- read.csv("Region_test.csv")
-rangeland_tif <- rast("Rangeland.tif")
+region_ee <- read.csv("trash/Region_test.csv")
+rangeland_tif <- rast("test/Rangeland.tif")
+climate_tif <- rast("test/Climate_yearly_2001-01-01.tif")
+climate_native <- rast("/Users/Wanja/Downloads/Climate_northwest_2001_01_native_crs.tif")
+climate_modis <- rast("climate_monthly/Climate_monthly_2001-01-01.tif") # "/Users/Wanja/Downloads/Climate_northwest_masked-9999_monthly_2001-01-01.tif"
+elevation_raw <- rast("/Users/Wanja/Downloads/Elevation_raw_2010-01-01.tif")
+elevation_resampled <- rast("/Users/Wanja/Downloads/Elevation_resampled_masked_2010-01-01.tif")
+veg_period <- rast("/Users/Wanja/Documents/repos/non-equilibrium/test_scripts/vegetation_period_2001.tif")
 
 # Quick inspection
 npp_modis_tif
 npp_wgs84_tif
+climate_tif
 View(df_ee)
 world_borders
 plot(world_borders)
@@ -80,6 +87,7 @@ head(df_wgs84)
 
 ncell(npp_modis_tif)
 ncell(npp_modis_wgs84)
+ncell(climate_modis_wgs84)
 
 global(!is.na(npp_modis_tif), "sum")
 global(!is.na(npp_modis_wgs84), "sum")
@@ -89,6 +97,7 @@ colSums(!is.na(df_wgs84))
 
 dim(df_ee)
 dim(df_wgs84)
+dim(df_climate_wgs84)
 
 plot(!is.na(npp_modis_tif$Gpp) & is.na(npp_modis_tif$Npp)) # we have more gpp than npp values bc it somehow has values in the oceans too; i.e. ALL FINE
 
@@ -272,3 +281,130 @@ all.equal(
   sort(unique(df_ee$latitude)),
   sort(unique(region_ee$latitude))
 )
+
+
+
+
+# ---- Climate test ----
+
+############################################################
+# PROJECT MODIS TO WGS84 (RASTER SIDE)
+############################################################
+
+climate_modis_wgs84 <- project(
+  climate_tif,
+  "EPSG:4326",
+  method = "bilinear"
+)
+
+plot(climate_modis_wgs84, main = "Climate MODIS projected to WGS84")
+
+############################################################
+# EXTRACT TABLE FROM REPROJECTED RASTER
+############################################################
+
+df_climate_wgs84 <- as.data.frame(
+  climate_modis_wgs84,
+  xy = TRUE,
+  cells = TRUE,
+  na.rm = NA
+)
+
+head(df_climate_wgs84)
+
+############################################################
+# COMPARE CLIMATE
+############################################################
+climate_native
+climate_modis
+crs(climate_native)
+crs(climate_modis)
+
+NAflag(climate_modis) 
+climate_modis[climate_modis == -9999] <- NaN
+global(is.na(climate_modis), "sum")
+
+climate_native_wgs84 <- project(
+  climate_native,
+  "EPSG:4326",
+  method = "bilinear"
+)
+
+climate_modis_wgs84 <- project(
+  climate_modis,
+  "EPSG:4326",
+  method = "bilinear"
+)
+
+plot(climate_native_wgs84)
+plot(climate_modis_wgs84)
+
+par(mfrow = c(2, 1))
+
+plot(
+  climate_native_wgs84[[5]],
+  main = "Climate (from native proj)",
+  col = viridis(100),
+  range = c(0, 200), 
+  #breaks = c(50, 100, 150, 200, 2000)
+)
+
+plot(
+  climate_modis_wgs84[[1]],
+  main = "Climate (from modis proj)",
+  col = viridis(100),
+  range = c(0, 200),
+  xlim = c(-180, 0),
+  #breaks = c(50, 100, 150, 200, 2000)
+)
+
+par(mfrow = c(1, 1))
+
+
+############################################################
+# STACK NPP & CLIMATE
+############################################################
+
+npp_modis_wgs84_cropped <- crop(npp_modis_wgs84, ext(climate_modis_wgs84))
+climate_modis_wgs84_resampled <- resample(climate_modis_wgs84, npp_modis_wgs84)
+
+ext(climate_modis_wgs84) 
+ext(npp_modis_wgs84)
+ext(npp_modis_wgs84_cropped)
+ext(climate_modis_wgs84_resampled)
+
+npp_climate_stack <- c(npp_modis_wgs84, climate_modis_wgs84_resampled)
+plot(npp_climate_stack)
+
+npp_climate_table <- as.data.frame(
+  npp_climate_stack,
+  xy = TRUE,
+  na.rm = NA
+)
+
+head(npp_climate_table)
+dim(npp_climate_table)
+colSums(!is.na(npp_climate_table))
+sum(complete.cases(npp_climate_table))
+View(npp_climate_table)
+
+
+
+############################################################
+# ELEVATION
+############################################################
+elevation_raw
+plot(elevation_raw)
+
+elevation_resampled
+NAflag(elevation_resampled) 
+elevation_resampled[elevation_resampled == -9999] <- NaN
+global(is.na(elevation_resampled), "sum")
+plot(elevation_resampled)
+plot(elevation_resampled[[1]])
+
+npp_elevation_stack <- c(npp_modis_tif, elevation_resampled)
+plot(npp_elevation_stack)
+
+rangeland_tif
+plot(rangeland_tif)
