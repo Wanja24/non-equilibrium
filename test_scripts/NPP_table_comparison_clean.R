@@ -6,12 +6,13 @@ library(terra)
 library(sf)
 library(jsonlite)
 library(viridis)
-library(dplyr)
+#library(dplyr)
 
 setwd("/Volumes/TOSHIBA EXT/non-equilibrium/data")
+setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 ############################################################
-# LOAD RASTERS (MODIS + WGS84 REPROJECTED) 
+# LOAD RASTERS (MODIS + WGS84 REPROJECTED)
 # & EXPORTED TABLE (EE SAMPLE OUTPUT)
 ############################################################
 
@@ -20,13 +21,15 @@ npp_wgs84_tif <- rast("test/NPP_test_17_06_wgs84.tif")
 df_ee <- read.csv("test/NPP_5km_2001_1_smallregion_25_06.csv") # "NPP_test_17_06_modis_wgs84latlon.csv"
 world_borders <- vect("world-administrative-boundaries/world-administrative-boundaries.shp")
 region_ee <- read.csv("trash/Region_test.csv")
-rangeland_tif <- rast("test/Rangeland.tif")
+rangeland_tif <- rast("rangeland_mask_new/Rangeland_mask_2024-01-01.tif")
 climate_tif <- rast("test/Climate_yearly_2001-01-01.tif")
 climate_native <- rast("/Users/Wanja/Downloads/Climate_northwest_2001_01_native_crs.tif")
 climate_modis <- rast("climate_monthly/Climate_monthly_2001-01-01.tif") # "/Users/Wanja/Downloads/Climate_northwest_masked-9999_monthly_2001-01-01.tif"
 elevation_raw <- rast("/Users/Wanja/Downloads/Elevation_raw_2010-01-01.tif")
 elevation_resampled <- rast("/Users/Wanja/Downloads/Elevation_resampled_masked_2010-01-01.tif")
-veg_period <- rast("/Users/Wanja/Documents/repos/non-equilibrium/test_scripts/vegetation_period_2001.tif")
+veg_period <- rast("/Users/Wanja/Documents/repos/non-equilibrium/test_scripts/vegetation_period_2024.tif")
+climate_yearly <- rast('climate_yearly/Climate_yearly_2002.tif')
+climate_veg_period <- rast('climate_yearly/Climate_vegetation_period_2002.tif')
 
 # Quick inspection
 npp_modis_tif
@@ -320,7 +323,7 @@ climate_modis
 crs(climate_native)
 crs(climate_modis)
 
-NAflag(climate_modis) 
+NAflag(climate_modis)
 climate_modis[climate_modis == -9999] <- NaN
 global(is.na(climate_modis), "sum")
 
@@ -345,7 +348,7 @@ plot(
   climate_native_wgs84[[5]],
   main = "Climate (from native proj)",
   col = viridis(100),
-  range = c(0, 200), 
+  range = c(0, 200),
   #breaks = c(50, 100, 150, 200, 2000)
 )
 
@@ -368,7 +371,7 @@ par(mfrow = c(1, 1))
 npp_modis_wgs84_cropped <- crop(npp_modis_wgs84, ext(climate_modis_wgs84))
 climate_modis_wgs84_resampled <- resample(climate_modis_wgs84, npp_modis_wgs84)
 
-ext(climate_modis_wgs84) 
+ext(climate_modis_wgs84)
 ext(npp_modis_wgs84)
 ext(npp_modis_wgs84_cropped)
 ext(climate_modis_wgs84_resampled)
@@ -397,7 +400,7 @@ elevation_raw
 plot(elevation_raw)
 
 elevation_resampled
-NAflag(elevation_resampled) 
+NAflag(elevation_resampled)
 elevation_resampled[elevation_resampled == -9999] <- NaN
 global(is.na(elevation_resampled), "sum")
 plot(elevation_resampled)
