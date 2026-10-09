@@ -76,7 +76,9 @@ library(sdmTMB)    # for frequentist spatial-temporal GLMMs and GAMMs
 library(ggeffects) # for visualising effects
 library(DHARMa)    # for model validation
 library(caret)     # for saving models
-
+library(gstat)     # for spatial correlation checks
+library(sp)        # for spatial correlation checks
+library(hexbin)    # for hexbin plot
 
 
 # Set the working directory and import the data.
@@ -236,7 +238,7 @@ head(df[, c("location_id", "latitude", "longitude", "year", "year_sc")])
 #* Subsection 6.1: Frequentist models ----
 
 # Setup: default sample + mesh (used unless a model specifies its own)
-output_folder <- "output_overnight"
+output_folder <- "output/output_overnight"
 
 set.seed(123)
 n_sample_locations <- 1000
@@ -292,7 +294,9 @@ model_registry <- list(
     family = tweedie(link = "log"),
     description = "Same as mod2 but on 5000-location sample, cutoff 5"#,
     #data = df_5000,        # must already exist in the environment
+    #data_name = "df_5000"
     #mesh = mesh_5000_5     # must already exist in the environment
+    #mesh_name = "mesh_5000_5"
   )
 )
 
@@ -303,9 +307,6 @@ models_to_run <- names(model_registry)[sapply(model_registry, function(x) isTRUE
 cat("Models queued for this run:", paste(models_to_run, collapse = ", "), "\n")
 
 run_results <- data.frame()
-fitted_models <- list()
-coef_results <- list()
-sanity_results <- list()
 
 for (mod_name in models_to_run) {
   spec <- model_registry[[mod_name]]
@@ -337,39 +338,19 @@ for (mod_name in models_to_run) {
     saveRDS(mod, file = file.path(output_folder, paste0(mod_name, "_", format(Sys.Date(), "%Y%m%d"), ".rds")))
     fitted_models[[mod_name]] <- mod
     
-    coefs <- tryCatch(tidy(mod, effects = "fixed", conf.int = TRUE), error = function(e) NULL)
-    coefs_ran <- tryCatch(tidy(mod, effects = "ran_pars", conf.int = TRUE), error = function(e) NULL)
-    if (!is.null(coefs)) coefs$name <- mod_name
-    if (!is.null(coefs_ran)) coefs_ran$name <- mod_name
-    coef_results[[mod_name]] <- list(fixed = coefs, ran_pars = coefs_ran)
-    
     converged <- !is.null(mod$sd_report) && mod$sd_report$pdHess
     max_gradient <- tryCatch(max(abs(mod$gradients)), error = function(e) NA)
     aic_val <- tryCatch(AIC(mod), error = function(e) NA)
-    
-    # ---- sanity() check: just save the returned object directly ----
-    sanity_check <- tryCatch({
-      sanity(mod)
-    }, error = function(e) {
-      message("sanity() failed for ", mod_name, ": ", conditionMessage(e))
-      NULL
-    })
-    
-    if (!is.null(sanity_check)) {
-      sanity_results[[mod_name]] <- sanity_check
-      sanity_all_ok <- tryCatch(all(unlist(sanity_check)), error = function(e) NA)
-    } else {
-      sanity_all_ok <- NA
-    }
-    
+    sanity_all_ok <- tryCatch(all(unlist(sanity(mod))), error = function(e) NA)
   } else {
     converged <- NA; max_gradient <- NA; aic_val <- NA; sanity_all_ok <- NA
   }
-  
+    
   run_results <- rbind(run_results, data.frame(
     name = mod_name,
     description = spec$description,
-    data_used = if (!is.null(spec$data)) deparse(substitute(spec$data)) else "df_sample (default)",
+    data_used = if (!is.null(spec$data_name)) spec$data_name else "df_sample (default)",
+    mesh_used = if (!is.null(spec$mesh_name)) spec$mesh_name else "mesh_tmb0 (default)",
     run_time_secs = run_time,
     converged = converged,
     max_gradient = max_gradient,
@@ -389,20 +370,11 @@ if (file.exists(summary_path)) {
   write.csv(run_results, summary_path, row.names = FALSE)
 }
 
-fixed_coefs_all <- do.call(rbind, lapply(coef_results, function(x) x$fixed))
-ran_coefs_all <- do.call(rbind, lapply(coef_results, function(x) x$ran_pars))
-write.csv(fixed_coefs_all, file.path(output_folder, paste0("fixed_coefs_", format(Sys.Date(), "%Y%m%d"), ".csv")), row.names = FALSE)
-write.csv(ran_coefs_all, file.path(output_folder, paste0("ran_coefs_", format(Sys.Date(), "%Y%m%d"), ".csv")), row.names = FALSE)
-
-# Save the full sanity() results as a single RDS (list of named logical vectors per model)
-saveRDS(sanity_results, file.path(output_folder, paste0("sanity_results_", format(Sys.Date(), "%Y%m%d"), ".rds")))
-
 run_results
 
 
 # Notify once run is finished
-
-notify_macos <- function(title, message, sound = "default") {
+notify_macos <- function(title, notif_message, sound = "default") {
   cmd <- sprintf(
     'display notification "%s" with title "%s" sound name "%s"',
     message, title, sound
@@ -410,10 +382,9 @@ notify_macos <- function(title, message, sound = "default") {
   system(sprintf("osascript -e '%s'", cmd))
 }
 
-# Call this at the end of your overnight script
 notify_macos(
   title = "Overnight model run finished",
-  message = paste(length(models_to_run), "models completed. Check", summary_path)
+  notif_message = paste(length(models_to_run), "models completed. Check", summary_path)
 )
 
 # read data later: mod$data
@@ -425,266 +396,262 @@ notify_macos(
 # all(unlist(sanity_result))  # quick TRUE/FALSE overall check
 
 
-# Section 7: Model interpretation ----
+# Section 7 & 8: Model interpretation & validation ----
 
-# Look at an example model
-mod2 <- readRDS("output_overnight/mod2_20261001.rds")
-
-# Parameters
-tidy(mod2, effects = "ran_pars", conf.int = TRUE)
-#'The Tweedie dispersion (phi) and power parameters control the distribution’s 
-#'mean-variance relationship. The Matérn range is the distance at which spatial 
-#'correlation becomes negligible (~0.13 correlation). The marginal spatial field 
-#'standard deviation (sigma_O) represents unexplained spatial variation.
-
-# Basic sanity check
-sanity(mod2)
-
-# Plot fitted values
-pred <- predict_response(mod2, terms = "pr_sum_sc [all]", ci_level = NA) #[-2:4]
-plot(pred)
-
-pred1 <- predict_response(mod2, terms = "tmmx_mean_sc [all]", ci_level = NA) # include [all] in the terms string to get a smooth plot
-plot(pred1)
-
-pred2 <- predict_response(mod2, terms = "pr_sum_cv_sc [all]", ci_level = NA)
-plot(pred2)
-
-pred3 <- predict_response(mod2, terms = "elevation_mean_sc [all]", ci_level = NA)
-plot(pred3)
-
-#' intercept has very large confidence intervals
-
-
-# Section 8: Model validation ----
-
-#* Subsection 8.0: Extract residuals ----
-
-#' I use two types of residuals:
-#'
-#'   1. Analytical randomized-quantile residuals - normal distribution
-#'   2. Simulation-based randomized-quantile residuals from DHARMa - uniform distribution
-
-# Extract analytical randomized-quantile residuals
-r1 <- residuals(mod2, type = "mle-mvn")
-
-# Extract simulation-based randomized-quantile residuals from DHARMa
-sim <- simulate(mod2, nsim = 500, type = "mle-mvn")
-r2 <- dharma_residuals(sim, mod2, return_DHARMa = TRUE)
-
-#'The randomized quantile residuals in residuals.sdmTMB() are returned such that 
-#'they will be normal(0, 1) if the model is consistent with the data. DHARMa residuals, 
-#'however, are returned as uniform(0, 1) under those same circumstances. 
-
-
-#* Subsection 8.1: Residual distribution ----
-
-# DHARMa
-hist(r2)
-plotQQunif(r2)
-# general tests
-testResiduals(r2)
-
-
-#* Subsection 8.2: Residuals vs. fitted values ---- 
-
-# DHARMa
-plotResiduals(r2)
-
-#' too large fitted values for large Npp i think
-
-#* Subsection 8.3: Residuals vs. covariates (in and not in the model) ----
-
-# DHARMa: set rank = FALSE??
-plotResiduals(r2, form = mod2$data$tmmx_mean_sc)
-plotResiduals(r2, form = mod2$data$pr_sum_sc)
-plotResiduals(r2, form = mod2$data$pr_sum_cv_sc)
-plotResiduals(r2, form = mod2$data$elevation_mean_sc)
-plotResiduals(r2, form = mod2$data$vegetation_length_sc)
-
-
-#* Subsection 8.4: Overdispersion and zero-inflation ----
-
-# DHARMa
-testDispersion(r2)
-testZeroInflation(r2)
-
-
-#* Subsection 8.5: Residuals vs. time ----
-
-# DHARMa
-plotResiduals(r2, form = mod2$data$year_sc)
-
-
-# Autocorrelation
-set.seed(123)
-n_sample_acf <- 20  # how many locations to check
-locations_acf_sample <- sample(unique(df_sample$location_id), size = n_sample_acf)
-
-# Attach residuals to df_sample for easy subsetting (safe since r2 was computed directly on df_sample)
-df_sample$resid <- r2$scaledResiduals # replace with r1 for analytical residuals 
-
-par(mfrow = c(4, 5), mar = c(4, 4, 2, 1))
-for (loc in locations_acf_sample) {
-  idx <- df_sample$location_id == loc
-  # order by year to ensure correct temporal sequence
-  resid_yr <- df_sample$resid[idx][order(df_sample$year[idx])]
-  acf(resid_yr, main = paste("Loc:", loc), lag.max = 5)
-}
-par(mfrow = c(1, 1))
-
-
-set.seed(123)
-n_sample_acf <- 100  # how many locations to check
-locations_acf_sample <- sample(unique(df_sample$location_id), size = n_sample_acf)
-
-acf_resid_by_loc <- sapply(locations_acf_sample, function(loc) {
-  idx <- df_sample$location_id == loc
-  resid_yr <- df_sample$resid[idx][order(df_sample$year[idx])]
-  if (length(resid_yr) < 6) return(rep(NA, 5))
-  acf(resid_yr, plot = FALSE, lag.max = 5)$acf[2:6]
-})
-
-acf_resid_by_loc <- t(acf_resid_by_loc)  # locations x lags
-colnames(acf_resid_by_loc) <- paste0("lag", 1:5)
-
-summary(acf_resid_by_loc)
-
-par(mfrow = c(2, 3))
-for (i in 1:5) {
-  hist(acf_resid_by_loc[,i])
-  abline(v = 0, col = "red", lty = 2)
-}
-par(mfrow = c(1, 1))
-
-
-# Mean ACF decay curve
-mean_acf <- colMeans(acf_resid_by_loc, na.rm = TRUE)
-plot(1:5, mean_acf, type = "b", pch = 16,
-     xlab = "Lag", ylab = "Mean residual autocorrelation",
-     main = "Average temporal ACF decay of residuals")
-abline(h = 0, col = "red", lty = 2)
-
-boxplot(acf_resid_by_loc[,1], acf_resid_by_loc[,2], acf_resid_by_loc[,3], acf_resid_by_loc[,4], acf_resid_by_loc[,5])
-
-
-#* Subsection 8.6: Residuals vs spatial coordinates ----
-
-# calculating x, y positions per group (location)
-groupLocations <- aggregate(df_sample[, c("longitude", "latitude")], 
-                            list(location_id = df_sample$location_id), mean)
-
-# calculating residuals per group, i.e. summing residuals of all years for each location
-r2_agg <- recalculateResiduals(r2, group = df_sample$location_id)
-
-# running the spatial test on grouped residuals
-testSpatialAutocorrelation(r2_agg, groupLocations$longitude, groupLocations$latitude)
-
-
-library(gstat)
-library(sp)
-
-# Combine aggregated residuals with their coordinates
-resid_df <- data.frame(
-  longitude = groupLocations$longitude,
-  latitude = groupLocations$latitude,
-  residual = r2_agg$scaledResiduals
-)
-
-# Convert to a spatial object
-coordinates(resid_df) <- ~ longitude + latitude
-
-# Compute and plot the empirical variogram
-vg <- variogram(residual ~ 1, data = resid_df)
-plot(vg, main = "Variogram of aggregated DHARMa residuals")
-
-
-
-
-years <- sort(unique(df_sample$year))
-
-spatial_test_results <- list()
-variogram_results <- list()
-
-for (yr in years) {
-  idx <- which(df_sample$year == yr)
+run_model_diagnostics <- function(mod, mod_name, output_folder) {
   
-  resid_yr <- r2$scaledResiduals[idx]
-  coords_yr <- df_sample[idx, c("longitude", "latitude")]
+  diag_folder <- file.path(output_folder, paste0(mod_name, "_diagnostics"))
+  dir.create(diag_folder, showWarnings = FALSE, recursive = TRUE)
   
-  # testSpatialAutocorrelation accepts a numeric vector directly, not just a DHARMa object
-  spatial_test_results[[as.character(yr)]] <- testSpatialAutocorrelation(
-    resid_yr, x = coords_yr$longitude, y = coords_yr$latitude, plot = FALSE
+  # ---- Parameters ----
+  ran_pars <- tryCatch(tidy(mod, effects = "ran_pars", conf.int = TRUE), error = function(e) NULL)
+  fixed_pars <- tryCatch(tidy(mod, effects = "fixed", conf.int = TRUE), error = function(e) NULL)
+  if (!is.null(ran_pars)) write.csv(ran_pars, file.path(diag_folder, "ran_pars.csv"), row.names = FALSE)
+  if (!is.null(fixed_pars)) write.csv(fixed_pars, file.path(diag_folder, "fixed_pars.csv"), row.names = FALSE)
+  
+  # ---- Sanity ----
+  sanity_check <- tryCatch(sanity(mod), error = function(e) NULL)
+  if (!is.null(sanity_check)) saveRDS(sanity_check, file.path(diag_folder, "sanity.rds"))
+  
+  # ---- Predicted response curves ----
+  pred_terms <- c("tmmx_mean_sc", "pr_sum_sc", "pr_sum_cv_sc", "elevation_mean_sc")
+  pred_list <- list()
+  
+  for (term in pred_terms) {
+    pred <- tryCatch(predict_response(mod, terms = paste0(term, " [all]"), ci_level = NA),
+                     error = function(e) NULL)
+    if (!is.null(pred)) {
+      pred_list[[term]] <- pred
+      p <- plot(pred) + labs(title = paste(mod_name, "-", term))
+      ggsave(file.path(diag_folder, paste0("pred_", term, ".png")), p, width = 6, height = 4)
+    }
+  }
+  saveRDS(pred_list, file.path(diag_folder, "predictions.rds"))
+  
+  # ---- Residuals ----
+  r1 <- tryCatch(residuals(mod, type = "mle-mvn"), error = function(e) NULL)
+  if (!is.null(r1)) saveRDS(r1, file.path(diag_folder, "r1_analytical_residuals.rds"))
+  
+  sim <- tryCatch(simulate(mod, nsim = 500, type = "mle-mvn"), error = function(e) NULL)
+  r2 <- if (!is.null(sim)) tryCatch(dharma_residuals(sim, mod, return_DHARMa = TRUE),
+                                    error = function(e) NULL) else NULL
+  
+  if (!is.null(r2)) {
+    saveRDS(r2, file.path(diag_folder, "r2_dharma_residuals.rds"))
+    
+    # Distribution checks
+    png(file.path(diag_folder, "r2_histogram.png"), width = 600, height = 400)
+    hist(r2)
+    dev.off()
+    
+    png(file.path(diag_folder, "r2_qq_uniform.png"), width = 600, height = 400)
+    plotQQunif(r2)
+    dev.off()
+    
+    # Residuals vs fitted
+    png(file.path(diag_folder, "r2_resid_vs_fitted.png"), width = 600, height = 400)
+    plotResiduals(r2)
+    dev.off()
+    
+    # Residuals vs each covariate
+    covariates <- c("tmmx_mean_sc", "pr_sum_sc", "pr_sum_cv_sc", "elevation_mean_sc",
+                    "vegetation_length_sc", "year_sc")
+    for (cov in covariates) {
+      if (cov %in% names(mod$data)) {
+        png(file.path(diag_folder, paste0("r2_resid_vs_", cov, ".png")), width = 600, height = 400)
+        tryCatch(plotResiduals(r2, form = mod$data[[cov]]), error = function(e) NULL)
+        dev.off()
+      }
+    }
+    
+    # Dispersion and zero-inflation plots (plots only, test results not saved)
+    png(file.path(diag_folder, "r2_dispersion_test.png"), width = 600, height = 400)
+    tryCatch(testDispersion(r2), error = function(e) NULL)
+    dev.off()
+    
+    png(file.path(diag_folder, "r2_zeroinflation_test.png"), width = 600, height = 400)
+    tryCatch(testZeroInflation(r2), error = function(e) NULL)
+    dev.off()
+    
+    # ---- Temporal autocorrelation of residuals within locations ----
+    dat <- mod$data
+    dat$resid <- r2$scaledResiduals  # use r1 for analytical residuals
+    
+    set.seed(123)
+    n_sample_acf <- min(100, length(unique(dat$location_id)))
+    locations_acf_sample <- sample(unique(dat$location_id), size = n_sample_acf)
+    
+    acf_resid_by_loc <- sapply(locations_acf_sample, function(loc) {
+      idx <- dat$location_id == loc
+      resid_yr <- dat$resid[idx][order(dat$year_sc[idx])]
+      if (length(resid_yr) < 6) return(rep(NA, 5))
+      acf(resid_yr, plot = FALSE, lag.max = 5)$acf[2:6]
+    })
+    acf_resid_by_loc <- t(acf_resid_by_loc)
+    colnames(acf_resid_by_loc) <- paste0("lag", 1:5)
+    
+    write.csv(acf_resid_by_loc, file.path(diag_folder, "acf_resid_by_location.csv"))
+    
+    # Histograms per lag
+    png(file.path(diag_folder, "acf_hist_by_lag.png"), width = 900, height = 600)
+    par(mfrow = c(2, 3))
+    for (i in 1:5) {
+      hist(acf_resid_by_loc[, i], main = paste("Lag", i), xlab = "ACF")
+      abline(v = 0, col = "red", lty = 2)
+    }
+    par(mfrow = c(1, 1))
+    dev.off()
+    
+    # Mean ACF decay curve
+    png(file.path(diag_folder, "acf_mean_decay.png"), width = 600, height = 400)
+    plot(1:5, colMeans(acf_resid_by_loc, na.rm = TRUE), type = "b", pch = 16,
+         xlab = "Lag", ylab = "Mean residual autocorrelation",
+         main = "Average temporal ACF decay of residuals")
+    abline(h = 0, col = "red", lty = 2)
+    dev.off()
+    
+    # Boxplot per lag
+    png(file.path(diag_folder, "acf_boxplot_by_lag.png"), width = 600, height = 400)
+    boxplot(acf_resid_by_loc, xlab = "Lag", ylab = "ACF", main = "Residual ACF by lag")
+    abline(h = 0, col = "red", lty = 2)
+    dev.off()
+    
+    
+    # ---- Spatial autocorrelation of residuals, per year ----
+    years <- sort(unique(dat$year_sc))
+    
+    moran_results <- data.frame(year = years, observed = NA, expected = NA, p_value = NA)
+    variogram_results <- list()
+    
+    for (i in seq_along(years)) {
+      yr <- years[i]
+      idx <- which(dat$year_sc == yr)
+      
+      resid_yr <- r2$scaledResiduals[idx]
+      coords_yr <- dat[idx, c("longitude", "latitude")]
+      
+      # Moran's I
+      moran <- tryCatch(
+        testSpatialAutocorrelation(resid_yr, x = coords_yr$longitude,
+                                   y = coords_yr$latitude, plot = FALSE),
+        error = function(e) NULL
+      )
+      if (!is.null(moran)) {
+        moran_results$observed[i] <- moran$statistic["observed"]
+        moran_results$expected[i] <- moran$statistic["expected"]
+        moran_results$p_value[i]  <- moran$p.value
+      }
+      
+      # Empirical variogram
+      df_vg <- data.frame(longitude = coords_yr$longitude,
+                          latitude = coords_yr$latitude,
+                          residual = resid_yr)
+      sp::coordinates(df_vg) <- ~ longitude + latitude
+      variogram_results[[as.character(yr)]] <- tryCatch(
+        gstat::variogram(residual ~ 1, data = df_vg),
+        error = function(e) NULL
+      )
+    }
+    
+    write.csv(moran_results, file.path(diag_folder, "spatial_morans_I_by_year.csv"), row.names = FALSE)
+    saveRDS(variogram_results, file.path(diag_folder, "spatial_variograms_by_year.rds"))
+    
+    # Panel of variograms, one per year
+    n_years <- length(years)
+    ncol_panel <- 4
+    nrow_panel <- ceiling(n_years / ncol_panel)
+    
+    png(file.path(diag_folder, "spatial_variograms_by_year.png"),
+        width = 300 * ncol_panel, height = 250 * nrow_panel)
+    par(mfrow = c(nrow_panel, ncol_panel), mar = c(4, 4, 2, 1))
+    for (yr in years) {
+      vg <- variogram_results[[as.character(yr)]]
+      if (!is.null(vg)) {
+        plot(vg$dist, vg$gamma, main = paste("Year:", yr),
+             xlab = "Distance", ylab = "Semivariance", pch = 16)
+      } else {
+        plot.new(); title(main = paste("Year:", yr, "(failed)"))
+      }
+    }
+    par(mfrow = c(1, 1))
+    dev.off()
+    
+    
+    # ---- Observed vs. fitted ----
+    fitted_vals <- tryCatch(predict(mod, type = "response")$est, error = function(e) NULL)
+    
+    if (!is.null(fitted_vals)) {
+      df_plot <- data.frame(fitted = fitted_vals, observed = mod$data$Npp)
+      
+      # Scatter (semi-transparent points)
+      png(file.path(diag_folder, "obs_vs_fitted_scatter.png"), width = 600, height = 400)
+      plot(df_plot$fitted, df_plot$observed,
+           xlab = "Fitted values", ylab = "Observed values",
+           main = paste("Observed vs. Fitted -", mod_name),
+           pch = 16, col = rgb(0, 0, 0, 0.3))
+      abline(0, 1, col = "red", lwd = 2, lty = 2)
+      dev.off()
+      
+      # Hexbin
+      p_hex <- ggplot(df_plot, aes(x = fitted, y = observed)) +
+        geom_hex(bins = 50) +
+        geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
+        scale_fill_viridis_c() +
+        labs(x = "Fitted values", y = "Observed values",
+             title = paste("Observed vs. Fitted -", mod_name), fill = "Count") +
+        theme_bw()
+      ggsave(file.path(diag_folder, "obs_vs_fitted_hex.png"), p_hex, width = 6, height = 4)
+      
+      # Smoother
+      p_smooth <- ggplot(df_plot, aes(x = fitted, y = observed)) +
+        geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),
+                    color = "steelblue", linewidth = 1) +
+        geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
+        labs(x = "Fitted values", y = "Observed values",
+             title = paste("Observed vs. Fitted (smoother) -", mod_name)) +
+        theme_bw()
+      ggsave(file.path(diag_folder, "obs_vs_fitted_smooth.png"), p_smooth, width = 6, height = 4)
+    }
+  }
+  
+  invisible(list(ran_pars = ran_pars, fixed_pars = fixed_pars, sanity = sanity_check,
+                 predictions = pred_list, r1 = r1, r2 = r2))
+}
+
+
+# Run across all saved models
+
+output_folder <- "output/output_overnight"
+
+model_files <- list.files(output_folder, pattern = "^mod[0-9a-zA-Z_]+\\.rds$", full.names = FALSE)
+model_names <- gsub("\\.rds$", "", model_files)
+
+n_ok <- 0
+n_failed <- 0
+
+for (mod_name in model_names) {
+  cat("\n--- Running diagnostics for", mod_name, "---\n")
+  
+  mod <- tryCatch(readRDS(file.path(output_folder, paste0(mod_name, ".rds"))), error = function(e) NULL)
+  
+  if (is.null(mod)) {
+    n_failed <- n_failed + 1
+    next
+  }
+  
+  result <- tryCatch(
+    run_model_diagnostics(mod, mod_name, output_folder),
+    error = function(e) {
+      message("Diagnostics failed for ", mod_name, ": ", conditionMessage(e))
+      NULL
+    }
   )
   
-  df_vg <- data.frame(longitude = coords_yr$longitude,
-                      latitude = coords_yr$latitude,
-                      residual = resid_yr)
-  coordinates(df_vg) <- ~ longitude + latitude
-  variogram_results[[as.character(yr)]] <- variogram(residual ~ 1, data = df_vg)
+  if (is.null(result)) n_failed <- n_failed + 1 else n_ok <- n_ok + 1
 }
 
-# Moran's I p-value per year
-sapply(spatial_test_results, function(x) x$p.value)
-
-# Panel of variogram plots, one per year
-n_years <- length(years)
-ncol_panel <- 4
-nrow_panel <- ceiling(n_years / ncol_panel)
-
-par(mfrow = c(nrow_panel, ncol_panel), mar = c(4, 4, 2, 1))
-for (yr in years) {
-  vg <- variogram_results[[as.character(yr)]]
-  plot(vg$dist, vg$gamma, main = paste("Year:", yr), 
-       xlab = "Distance", ylab = "Semivariance", pch = 16)
-}
-par(mfrow = c(1, 1))
-
-#' there seems to still be unaccounted spatial correlation even with a simple mesh
-
-
-#* Subsection 8.7: Observed vs. fitted values ----
-
-fitted_vals <- fitted(mod2)
-observed_vals <- df_sample$Npp
-
-plot(fitted_vals, observed_vals,
-     xlab = "Fitted values", ylab = "Observed values",
-     main = "Observed vs. Fitted - mod2",
-     pch = 16, col = rgb(0, 0, 0, 0.3))
-abline(0, 1, col = "red", lwd = 2, lty = 2)  # 1:1 reference line
-
-
-df_plot <- data.frame(fitted = fitted_vals, observed = observed_vals)
-
-ggplot(df_plot, aes(x = fitted, y = observed)) +
-  geom_hex(bins = 50) +
-  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
-  scale_fill_viridis_c() +
-  labs(x = "Fitted values", y = "Observed values", title = "Observed vs. Fitted - mod2",
-       fill = "Count") +
-  theme_bw()
-
-
-df_plot <- data.frame(fitted = fitted_vals, observed = observed_vals)
-
-ggplot(df_plot, aes(x = fitted, y = observed)) +
-  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), color = "steelblue", linewidth = 1) +
-  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
-  labs(x = "Fitted values", y = "Observed values", title = "Observed vs. Fitted - mod2 (smoother)") +
-  theme_bw()
-
-#' some very large fitted values for lower observed values. 
-#' no overfitting visible
-
-
-#* Subsection 8.8: Conclusions
-
-#' - there's problems with almost every residual test
-#' - main problem: non-linear relations with tmmx, pr, pr_cv (maybe)
-#' - elevation and year might only have a linear effect depending on if one looks at the scale or original plot
-#' - year needs to be included, but maybe linearly is enough
-#' - still spatial correlation with a simple mesh, but better than no mesh; finer mesh makes it only slightly better
-#' - maybe if the above is adjusted, the non normality, fitted values, overdispersion and zero inflation will go away
-#' - and maybe the tests are just all significant because of the high sample size?
-
+# Notification
+notify_macos(
+  title = "Model diagnostics finished",
+  notif_message = sprintf("%d models done, %d failed. Output in %s", n_ok, n_failed, output_folder)
+)
