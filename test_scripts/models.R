@@ -83,7 +83,7 @@ library(caret)     # for saving models
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("cv_new/table_wgs84_2002-2018_with_cv_sample.parquet")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_sample_100000px_seed42.parquet")
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -93,15 +93,9 @@ names(df)           # column names
 
 # Section 3: Data coding ----
 
-# Create a location grouping factor from lon/lat (each unique coordinate pair = one location)
-df$location_id <- interaction(df$longitude, df$latitude, drop = TRUE)
-locations <- unique(df$location_id)
-length(locations)
-
-# Omit outliers: keep only rows below the 99th percentile for Npp & pr_sum
+# Omit outliers: keep only rows below the 99th percentile for Npp
 npp_99 <- quantile(df$Npp, 0.99, na.rm = TRUE)
-pr_sum_99 <- quantile(df$pr_sum, 0.99, na.rm = TRUE)
-df <- df[df$Npp < npp_99 & df$pr_sum < pr_sum_99, ]
+df <- df[df$Npp < npp_99, ]
 nrow(df)
 
 # Check and drop missing values
@@ -251,20 +245,17 @@ sum(df$Npp == 0) # Npp contains a few zeros
 
 #* Subsection 4.6: Covariates over time ----
 
-df_veg_clean <- df[!is.na(df$veg_tmmn_mean), ]
-dim(df_veg_clean)
-
 ggplot(data = df, aes(y = tmmn_mean, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = tmmx_mean, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = pr_sum, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = elevation_mean, x = year)) + geom_smooth(se = TRUE)
 
-ggplot(data = df_veg_clean, aes(y = veg_tmmn_mean, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_tmmx_mean, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_pr_sum, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = vegetation_length, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_tmmn_mean, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_tmmx_mean, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_pr_sum, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = vegetation_length, x = year)) + geom_smooth(se = TRUE)
 
 # Temperature and precipitation show a non-linear pattern over time, 
 # both in the year and in the vegetation period. Temperature increases peaking 
@@ -281,11 +272,11 @@ ggplot(data = df, aes(y = Npp, x = pr_sum)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = Npp, x = pr_sum_cv)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = Npp, x = elevation_mean)) + geom_smooth(se = TRUE)
 
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_tmmn_mean)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_tmmx_mean)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_pr_sum)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_pr_sum_cv)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = vegetation_length)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_tmmn_mean)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_tmmx_mean)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_pr_sum)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_pr_sum_cv)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = vegetation_length)) + geom_smooth(se = TRUE)
 
 ggplot(data = df, aes(y = Npp, x = year)) + geom_smooth(se = TRUE)
 
@@ -492,7 +483,7 @@ points(coords_sample[, c("longitude", "latitude")], col = "red", pch = 16, cex =
 
 # Take a random sample of locations (all years for each sampled location)
 set.seed(123)
-n_sample_locations <- 5000  # adjust as needed
+n_sample_locations <- 2000  # adjust as needed
 locations_sample <- sample(unique(df$location_id), size = n_sample_locations)
 df_sample <- df[df$location_id %in% locations_sample, ]
 nrow(df_sample)                     # resulting row count
@@ -534,11 +525,9 @@ print(run_time)
 start_time <- Sys.time()
 
 mod00 <- sdmTMB(
-  Npp ~ 1,
+  Npp ~ year_sc,
   spatial = "on",
   mesh = mesh_tmb0,
-  time = "year_sc",
-  spatiotemporal = "iid",
   family = tweedie(link = "log"),
   data = df_sample
 )
@@ -1513,7 +1502,7 @@ tidy(mod2, effects = "ran_pars", conf.int = TRUE)
 sanity(mod2)
 
 # Plot fitted values
-pred <- predict_response(mod4, terms = "pr_sum_sc [all]", ci_level = NA) #[-2:4]
+pred <- predict_response(mod2, terms = "pr_sum_sc [all]", ci_level = NA) #[-2:4]
 plot(pred)
 
 # Apply the model's link function manually to transform back to the link scale to verify that the modelled relation is linear
@@ -1527,13 +1516,13 @@ plot(pred)
 #' intercept has very large confidence intervals
 #' TODO: choose how to marginalize over non-focal predictors with the "margin" argument
 
-pred1 <- predict_response(mod4, terms = "tmmx_mean_sc [all]", ci_level = NA) # include [all] in the terms string to get a smooth plot
+pred1 <- predict_response(mod2, terms = "tmmx_mean_sc [all]", ci_level = NA) # include [all] in the terms string to get a smooth plot
 plot(pred1)
 
-pred2 <- predict_response(mod4, terms = "pr_sum_cv_sc [all]", ci_level = NA)
+pred2 <- predict_response(mod2, terms = "pr_sum_cv_sc [all]", ci_level = NA)
 plot(pred2)
 
-pred3 <- predict_response(mod4, terms = "elevation_mean_sc [all]", ci_level = NA)
+pred3 <- predict_response(mod2, terms = "elevation_mean_sc [all]", ci_level = NA)
 plot(pred3)
 
 
@@ -1657,7 +1646,7 @@ ggplot(df_resid_year, aes(x = year_sc, y = resid)) +
   theme_bw()
 
 # DHARMa
-plotResiduals(r2, form = mod$data$year_sc)
+plotResiduals(r2, form = mod2$data$year_sc)
 
 
 # Autocorrelation
@@ -1666,7 +1655,7 @@ n_sample_acf <- 20  # how many locations to check
 locations_acf_sample <- sample(unique(df_sample$location_id), size = n_sample_acf)
 
 # Attach residuals to df_sample for easy subsetting (safe since r2 was computed directly on df_sample)
-df_sample$resid <- r3$scaledResiduals # replace with r1 for analytical residuals 
+df_sample$resid <- r2$scaledResiduals # replace with r1 for analytical residuals 
 
 par(mfrow = c(4, 5), mar = c(4, 4, 2, 1))
 for (loc in locations_acf_sample) {
@@ -1809,7 +1798,7 @@ par(mfrow = c(1, 1))
 
 #* Subsection 8.7: Observed vs. fitted values ----
 
-fitted_vals <- fitted(mod4)
+fitted_vals <- fitted(mod2)
 observed_vals <- df_sample$Npp
 
 plot(fitted_vals, observed_vals,

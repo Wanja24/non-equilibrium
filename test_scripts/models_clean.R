@@ -83,7 +83,8 @@ library(caret)     # for saving models
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("cv_new/table_wgs84_2002-2018_with_cv_sample.parquet")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_sample_100000px_seed42.parquet")
+
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -93,15 +94,9 @@ names(df)           # column names
 
 # Section 3: Data coding ----
 
-# Create a location grouping factor from lon/lat (each unique coordinate pair = one location)
-df$location_id <- interaction(df$longitude, df$latitude, drop = TRUE)
-locations <- unique(df$location_id)
-length(locations)
-
-# Omit outliers: keep only rows below the 99th percentile for Npp & pr_sum
+# Omit outliers: keep only rows below the 99th percentile for Npp
 npp_99 <- quantile(df$Npp, 0.99, na.rm = TRUE)
-pr_sum_99 <- quantile(df$pr_sum, 0.99, na.rm = TRUE)
-df <- df[df$Npp < npp_99 & df$pr_sum < pr_sum_99, ]
+df <- df[df$Npp < npp_99, ]
 nrow(df)
 
 # Check and drop missing values
@@ -260,11 +255,11 @@ ggplot(data = df, aes(y = pr_sum, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = elevation_mean, x = year)) + geom_smooth(se = TRUE)
 
-ggplot(data = df_veg_clean, aes(y = veg_tmmn_mean, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_tmmx_mean, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_pr_sum, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = veg_pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = vegetation_length, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_tmmn_mean, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_tmmx_mean, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_pr_sum, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = veg_pr_sum_cv, x = year)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = vegetation_length, x = year)) + geom_smooth(se = TRUE)
 
 # Temperature and precipitation show a non-linear pattern over time, 
 # both in the year and in the vegetation period. Temperature increases peaking 
@@ -281,11 +276,11 @@ ggplot(data = df, aes(y = Npp, x = pr_sum)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = Npp, x = pr_sum_cv)) + geom_smooth(se = TRUE)
 ggplot(data = df, aes(y = Npp, x = elevation_mean)) + geom_smooth(se = TRUE)
 
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_tmmn_mean)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_tmmx_mean)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_pr_sum)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = veg_pr_sum_cv)) + geom_smooth(se = TRUE)
-ggplot(data = df_veg_clean, aes(y = Npp, x = vegetation_length)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_tmmn_mean)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_tmmx_mean)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_pr_sum)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = veg_pr_sum_cv)) + geom_smooth(se = TRUE)
+ggplot(data = df, aes(y = Npp, x = vegetation_length)) + geom_smooth(se = TRUE)
 
 ggplot(data = df, aes(y = Npp, x = year)) + geom_smooth(se = TRUE)
 
@@ -512,11 +507,11 @@ plot(mesh_tmb0)
 
 # Tweedie GLM with sdmTMB
 
-# Null model with space
+# Null model with space and time
 start_time <- Sys.time()
 
 mod0 <- sdmTMB(
-  Npp ~ 1,
+  Npp ~ year_sc,
   spatial = "on",
   mesh = mesh_tmb0,
   family = tweedie(link = 'log'),

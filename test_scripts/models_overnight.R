@@ -83,7 +83,7 @@ library(caret)     # for saving models
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("cv_new/table_wgs84_2002-2018_with_cv_sample.parquet")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_sample_100000px_seed42.parquet")
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -93,15 +93,9 @@ names(df)           # column names
 
 # Section 3: Data coding ----
 
-# Create a location grouping factor from lon/lat (each unique coordinate pair = one location)
-df$location_id <- interaction(df$longitude, df$latitude, drop = TRUE)
-locations <- unique(df$location_id)
-length(locations)
-
-# Omit outliers: keep only rows below the 99th percentile for Npp & pr_sum
+# Omit outliers: keep only rows below the 99th percentile for Npp
 npp_99 <- quantile(df$Npp, 0.99, na.rm = TRUE)
-pr_sum_99 <- quantile(df$pr_sum, 0.99, na.rm = TRUE)
-df <- df[df$Npp < npp_99 & df$pr_sum < pr_sum_99, ]
+df <- df[df$Npp < npp_99, ]
 nrow(df)
 
 # Check and drop missing values
@@ -260,10 +254,10 @@ mesh_tmb0 <- make_mesh(df_sample, xy_cols = c("longitude", "latitude"), mesh = m
 model_registry <- list(
   mod0 = list(
     run = TRUE,
-    formula = Npp ~ 1,
+    formula = Npp ~ year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
-    description = "Null model with space"
+    description = "Null model, space + time"
     # data / mesh omitted -> uses defaults
   ),
   mod1 = list(
