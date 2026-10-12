@@ -247,7 +247,9 @@ df_sample <- df[df$location_id %in% locations_sample, ]
 nrow(df_sample)
 length(unique(df_sample$location_id))
 
-mesh_fm0 <- fm_mesh_2d(loc = unique(df_sample[, c("longitude", "latitude")]), cutoff = 5)
+df_sample <- df
+
+mesh_fm0 <- fm_mesh_2d(loc = unique(df_sample[, c("longitude", "latitude")]), cutoff = 1)
 mesh_tmb0 <- make_mesh(df_sample, xy_cols = c("longitude", "latitude"), mesh = mesh_fm0)
 
 
@@ -255,7 +257,7 @@ mesh_tmb0 <- make_mesh(df_sample, xy_cols = c("longitude", "latitude"), mesh = m
 
 model_registry <- list(
   mod0 = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
