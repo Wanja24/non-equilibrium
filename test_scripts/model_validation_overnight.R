@@ -14,6 +14,9 @@ library(hexbin)    # geom_hex
 # Set the working directory and import the data.
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
+# Load scaling parameters
+scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_100000px_seed42.csv")
+
 # Base R png device: same physical size as before (pixel values / 72 dpi), saved at 300 dpi
 png_plot <- function(file, width = 600, height = 400) {
   png(file, width = width / 72, height = height / 72, units = "in", res = 300)
@@ -32,16 +35,21 @@ theme_plain <- function(base_size = 12) {
           legend.title = element_text(size = base_size))
 }
 
-# Returns a function converting a scaled covariate back to its original units.
-# Works because x_sc = (x - mean) / sd is exactly linear, so mean and sd can be
-# recovered from the model data, provided the unscaled column is in mod$data.
-make_unscaler <- function(sc_name, data) {
+# Returns a function converting a scaled covariate back to its original units,
+# using the mean and sd saved from the training set: x = mean + sd * x_sc
+make_unscaler <- function(sc_name, params = scaling_params) {
   orig_name <- sub("_sc$", "", sc_name)
-  if (orig_name %in% names(data)) {
-    cf <- coef(lm(data[[orig_name]] ~ data[[sc_name]]))
-    return(function(x) cf[[1]] + cf[[2]] * x)
+  
+  # year_sc: shifted by the minimum year, not z-scored
+  if (sc_name == "year_sc") {
+    year_min <- params$mean[params$variable == "year_min"]
+    return(function(x) x + year_min)
   }
-  if (sc_name == "year_sc") return(function(x) x + 2000)  # year_sc = year - 2000
+  
+  row <- params[params$variable == orig_name, ]
+  if (nrow(row) == 1 && !is.na(row$sd)) {
+    return(function(x) row$mean + row$sd * x)
+  }
   NULL
 }
 
@@ -71,7 +79,7 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
       df_pred <- as.data.frame(pred)
       df_pred$x_sc <- df_pred$x
       
-      unscale <- make_unscaler(term, mod$data)
+      unscale <- make_unscaler(term)
       if (!is.null(unscale)) df_pred$x <- unscale(df_pred$x_sc)
       x_label <- if (!is.null(unscale)) sub("_sc$", "", term) else term
       
