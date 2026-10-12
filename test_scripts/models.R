@@ -483,7 +483,7 @@ points(coords_sample[, c("longitude", "latitude")], col = "red", pch = 16, cex =
 
 # Take a random sample of locations (all years for each sampled location)
 set.seed(123)
-n_sample_locations <- 2000  # adjust as needed
+n_sample_locations <- 1000  # adjust as needed
 locations_sample <- sample(unique(df$location_id), size = n_sample_locations)
 df_sample <- df[df$location_id %in% locations_sample, ]
 nrow(df_sample)                     # resulting row count
@@ -554,11 +554,11 @@ print(run_time)
 summary(mod1)
 family_params(mod1)
 
-# Linear model yearly sdmTMB
+# Linear model yearly sdmTMB with time 
 start_time <- Sys.time()
 
 mod11 <- sdmTMB(
-  Npp ~ tmmx_mean_sc + pr_sum_sc + pr_sum_cv_sc + elevation_mean_sc,
+  Npp ~ tmmx_mean_sc + pr_sum_sc + pr_sum_cv_sc + elevation_mean_sc + year_sc,
   spatial = "off",
   mesh = mesh_tmb0,
   family = tweedie(link = 'log'),
@@ -1798,7 +1798,9 @@ par(mfrow = c(1, 1))
 
 #* Subsection 8.7: Observed vs. fitted values ----
 
-fitted_vals <- fitted(mod2)
+#fitted_vals <- fitted(mod2)
+fitted_vals <- predict(mod2, type = "response")$est
+
 observed_vals <- df_sample$Npp
 
 plot(fitted_vals, observed_vals,
