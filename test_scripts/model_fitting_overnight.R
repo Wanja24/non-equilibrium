@@ -85,7 +85,8 @@ library(hexbin)    # for hexbin plot
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_sample_100000px_seed42.parquet")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_train_100000px_seed42.parquet")
+scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_100000px_seed42.csv")
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -95,35 +96,20 @@ names(df)           # column names
 
 # Section 3: Data coding ----
 
-# Omit outliers: keep only rows below the 99th percentile for Npp
-npp_99 <- quantile(df$Npp, 0.99, na.rm = TRUE)
-df <- df[df$Npp < npp_99, ]
-nrow(df)
-
-# Check and drop missing values
+# Check missing values
 sum(is.na(df))      # missing values overall
 colSums(is.na(df))  # missing values by column
-df <- subset(df, !is.na(pr_sum)) # drop missing values in pr_sum
-colSums(is.na(df))  # remaining missing values by column
-dim(df)             # remaining rows
 
-# Check and exclude pixels with missing years
+# Check pixels with missing years
 table(df$year) 
-n_years <- length(unique(df$year))
-n_years
+length(unique(df$year))
 range(df$year)
 
-# Keep only locations with data for all years
-years_per_location <- tapply(df$year, df$location_id, function(x) length(unique(x)))
-complete_locations <- names(years_per_location)[years_per_location == n_years]
-df <- df[df$location_id %in% complete_locations, ]
+# Check number of locations and rows
+length(unique(df$location_id)) 
+nrow(df)                      
 
-length(complete_locations)  # how many locations have all 18 years
-nrow(df)                    # resulting row count
-table(df$year) 
-
-# Rescale year
-df$year_sc <- df$year - min(df$year) + 2
+# Check year scaling
 head(df[, c("year", "year_sc")], 5)
 tail(df[, c("year", "year_sc")], 5)
 #' I will use the covariate Year in the models. However, it starts at 2002. 
@@ -139,17 +125,11 @@ tail(df[, c("year", "year_sc")], 5)
 sapply(df, class)   # check data types
 # fine so far bc I do not have categorical covariates at this point
 
-# Standardize the continuous covariates to mean 0 and sd 1
-vars <- c("tmmn_mean", "tmmx_mean", "pr_sum", "veg_tmmn_mean", "veg_tmmx_mean", 
-          "veg_pr_sum", "vegetation_length", "elevation_mean", "pr_sum_cv", "veg_pr_sum_cv")
-for (var in vars) {
-  df[[paste0(var, "_sc")]] <- as.numeric(scale(df[[var]]))
-}
+# Check standardized covariates (mean 0 and sd 1)
 names(df)
+scaling_params
 
-# Order observations
-df <- df[order(df$location_id, df$year), ]
-rownames(df) <- 1:nrow(df)
+# Check order of observations
 head(df[, c("location_id", "latitude", "longitude", "year", "year_sc")])
 #' For making auto-correlations functions, observations need to be ordered correctly 
 #' (from low to high bc the acf assumes that)
