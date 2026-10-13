@@ -85,8 +85,10 @@ library(hexbin)    # for hexbin plot
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_train_100000px_seed42.parquet")
-scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_100000px_seed42.csv")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_train_5000px_seed42.parquet")
+scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_5000px_seed42.csv")
+
+output_folder <- "output/output_overnight_test"
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -218,14 +220,12 @@ head(df[, c("location_id", "latitude", "longitude", "year", "year_sc")])
 #* Subsection 6.1: Frequentist models ----
 
 # Setup: default sample + mesh (used unless a model specifies its own)
-output_folder <- "output/output_overnight"
-
-set.seed(123)
-n_sample_locations <- 1000
-locations_sample <- sample(unique(df$location_id), size = n_sample_locations)
-df_sample <- df[df$location_id %in% locations_sample, ]
-nrow(df_sample)
-length(unique(df_sample$location_id))
+# set.seed(123)
+# n_sample_locations <- 1000
+# locations_sample <- sample(unique(df$location_id), size = n_sample_locations)
+# df_sample <- df[df$location_id %in% locations_sample, ]
+# nrow(df_sample)
+# length(unique(df_sample$location_id))
 
 df_sample <- df
 
@@ -236,39 +236,102 @@ mesh_tmb0 <- make_mesh(df_sample, xy_cols = c("longitude", "latitude"), mesh = m
 # Model registry
 
 model_registry <- list(
-  mod0 = list(
-    run = FALSE,
+  mod0_null = list(
+    run = TRUE,
     formula = Npp ~ year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
     description = "Null model, space + time"
     # data / mesh omitted -> uses defaults
   ),
-  mod1 = list(
-    run = FALSE,
+  mod1_linear = list(
+    run = TRUE,
     formula = Npp ~ tmmx_mean_sc + pr_sum_sc + pr_sum_cv_sc + elevation_mean_sc + year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
     description = "Linear model, space + time"
   ),
-  mod2 = list(
+  mod2_withoutCV = list(
+    run = TRUE,
+    formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
+      elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Smoothers k=4, without CV, space + time"
+  ),
+  mod3_smooth = list(
     run = TRUE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
-    description = "Smoothers k=4/4, space + time"
+    description = "Smoothers k=4/4, with CV, space + time"
   ),
-  mod3 = list(
-    run = FALSE,
+  mod4_wiggly = list(
+    run = TRUE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 8) + elevation_mean_sc + year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
-    description = "Smoothers k=4/8 (wigglier CV), space + time"
+    description = "Smoothers k=4/8, wigglier CV, space + time"
+  ),
+  mod5_withoutSpace = list(
+    run = TRUE,
+    formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
+      s(pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
+    spatial = "off",
+    family = tweedie(link = "log"),
+    description = "Smoothers k=4/4, with CV, no space, with time"
+  ),
+  vegmod1_linear = list(
+    run = FALSE,
+    formula = Npp ~ veg_tmmx_mean_sc + veg_pr_sum_sc + veg_pr_sum_cv_sc + vegetation_length_sc + elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Linear model, space + time"
+  ),
+  vegmod2_withoutCV = list(
+    run = FALSE,
+    formula = Npp ~ poly(veg_tmmx_mean_sc, 2) + s(veg_pr_sum_sc, bs = "cr", k = 4) +
+      vegetation_length_sc + elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Smoothers k=4, without CV, space + time"
+  ),
+  vegmod3_smooth = list(
+    run = FALSE,
+    formula = Npp ~ poly(veg_tmmx_mean_sc, 2) + s(veg_pr_sum_sc, bs = "cr", k = 4) +
+      s(veg_pr_sum_cv_sc, bs = "cr", k = 4) + vegetation_length_sc + elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Smoothers k=4/4, with CV, space + time"
+  ),
+  vegmod4_wiggly = list(
+    run = FALSE,
+    formula = Npp ~ poly(veg_tmmx_mean_sc, 2) + s(veg_pr_sum_sc, bs = "cr", k = 4) +
+      s(veg_pr_sum_cv_sc, bs = "cr", k = 8) + vegetation_length_sc + elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Smoothers k=4/8, wigglier CV, space + time"
+  ),
+  vegmod5_withoutSpace = list(
+    run = FALSE,
+    formula = Npp ~ poly(veg_tmmx_mean_sc, 2) + s(veg_pr_sum_sc, bs = "cr", k = 4) +
+      s(veg_pr_sum_cv_sc, bs = "cr", k = 4) + vegetation_length_sc + elevation_mean_sc + year_sc,
+    spatial = "off",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Smoothers k=4/4, with CV, no space, with time"
+  ),
+  vegmod6_withoutVeglength = list(
+    run = FALSE,
+    formula = Npp ~ poly(veg_tmmx_mean_sc, 2) + s(veg_pr_sum_sc, bs = "cr", k = 4) +
+      s(veg_pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
+    spatial = "on",
+    family = tweedie(link = "log"),
+    description = "Vegetation period: Smoothers k=4/4, with CV, without vegetation length, space + time"
   ),
   # Example of a model using a DIFFERENT sample/mesh than the default
-  mod4_bigsample = list(
+  mod6_bigsample = list(
     run = FALSE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
