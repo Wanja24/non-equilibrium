@@ -15,7 +15,11 @@ library(hexbin)    # geom_hex
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load scaling parameters
-scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_100000px_seed42.csv")
+scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_50000px_seed42.csv")
+
+# Folder with saved models
+output_folder <- "output/output_overnight"
+
 
 # Base R png device: same physical size as before (pixel values / 72 dpi), saved at 300 dpi
 png_plot <- function(file, width = 600, height = 400) {
@@ -39,13 +43,13 @@ theme_plain <- function(base_size = 12) {
 # using the mean and sd saved from the training set: x = mean + sd * x_sc
 make_unscaler <- function(sc_name, params = scaling_params) {
   orig_name <- sub("_sc$", "", sc_name)
-  
+
   # year_sc: shifted by the minimum year, not z-scored
   if (sc_name == "year_sc") {
     year_min <- params$mean[params$variable == "year_min"]
     return(function(x) x + year_min)
   }
-  
+
   row <- params[params$variable == orig_name, ]
   if (nrow(row) == 1 && !is.na(row$sd)) {
     return(function(x) row$mean + row$sd * x)
@@ -54,16 +58,16 @@ make_unscaler <- function(sc_name, params = scaling_params) {
 }
 
 run_model_diagnostics <- function(mod, mod_name, output_folder) {
-  
+
   diag_folder <- file.path(output_folder, paste0(mod_name, "_diagnostics"))
   dir.create(diag_folder, showWarnings = FALSE, recursive = TRUE)
-  
+
   # ---- Parameters ----
   ran_pars <- tryCatch(tidy(mod, effects = "ran_pars", conf.int = TRUE), error = function(e) NULL)
   fixed_pars <- tryCatch(tidy(mod, effects = "fixed", conf.int = TRUE), error = function(e) NULL)
   if (!is.null(ran_pars)) write.csv(ran_pars, file.path(diag_folder, "ran_pars.csv"), row.names = FALSE)
   if (!is.null(fixed_pars)) write.csv(fixed_pars, file.path(diag_folder, "fixed_pars.csv"), row.names = FALSE)
-  
+
   # ---- Sanity ----
   sanity_check <- tryCatch(sanity(mod), error = function(e) NULL)
   if (!is.null(sanity_check)) saveRDS(sanity_check, file.path(diag_folder, "sanity.rds"))
@@ -71,18 +75,18 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
   # ---- Predicted response curves ----
   model_vars <- setdiff(all.vars(mod$formula[[1]]), "Npp")
   pred_list <- list()
-  
+
   for (term in model_vars) {
     pred <- tryCatch(predict_response(mod, terms = paste0(term, " [all]"), ci_level = NA),
                      error = function(e) NULL)
     if (!is.null(pred)) {
       df_pred <- as.data.frame(pred)
       df_pred$x_sc <- df_pred$x
-      
+
       unscale <- make_unscaler(term)
       if (!is.null(unscale)) df_pred$x <- unscale(df_pred$x_sc)
       x_label <- if (!is.null(unscale)) sub("_sc$", "", term) else term
-      
+
       pred_list[[term]] <- df_pred
       p <- ggplot(df_pred, aes(x = x, y = predicted)) +
         geom_line(linewidth = 1) +
@@ -93,32 +97,32 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
     }
   }
   saveRDS(pred_list, file.path(diag_folder, "predictions.rds"))
-  
+
   # ---- Residuals ----
   r1 <- tryCatch(residuals(mod, type = "mle-mvn"), error = function(e) NULL)
   if (!is.null(r1)) saveRDS(r1, file.path(diag_folder, "r1_analytical_residuals.rds"))
-  
+
   sim <- tryCatch(simulate(mod, nsim = 500, type = "mle-mvn"), error = function(e) NULL)
   r2 <- if (!is.null(sim)) tryCatch(dharma_residuals(sim, mod, return_DHARMa = TRUE),
                                     error = function(e) NULL) else NULL
-  
+
   if (!is.null(r2)) {
     saveRDS(r2, file.path(diag_folder, "r2_dharma_residuals.rds"))
-    
+
     # Distribution checks
     png_plot(file.path(diag_folder, "r2_histogram.png"))
     hist(r2)
     dev.off()
-    
+
     png_plot(file.path(diag_folder, "r2_qq_uniform.png"))
     plotQQunif(r2)
     dev.off()
-    
+
     # Residuals vs fitted
     png_plot(file.path(diag_folder, "r2_resid_vs_fitted.png"))
     plotResiduals(r2)
     dev.off()
-    
+
     # Residuals vs each covariate
     for (cov in model_vars) {
       if (cov %in% names(mod$data)) {
@@ -127,24 +131,24 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
         dev.off()
       }
     }
-    
+
     # Dispersion and zero-inflation plots (plots only, test results not saved)
     png_plot(file.path(diag_folder, "r2_dispersion_test.png"))
     tryCatch(testDispersion(r2), error = function(e) NULL)
     dev.off()
-    
+
     png_plot(file.path(diag_folder, "r2_zeroinflation_test.png"))
     tryCatch(testZeroInflation(r2), error = function(e) NULL)
     dev.off()
-    
+
     # ---- Temporal autocorrelation of residuals within locations ----
     dat <- mod$data
     dat$resid <- r2$scaledResiduals  # use r1 for analytical residuals
-    
+
     set.seed(123)
     n_sample_acf <- min(100, length(unique(dat$location_id)))
     locations_acf_sample <- sample(unique(dat$location_id), size = n_sample_acf)
-    
+
     acf_resid_by_loc <- sapply(locations_acf_sample, function(loc) {
       idx <- dat$location_id == loc
       resid_yr <- dat$resid[idx][order(dat$year_sc[idx])]
@@ -153,9 +157,9 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
     })
     acf_resid_by_loc <- t(acf_resid_by_loc)
     colnames(acf_resid_by_loc) <- paste0("lag", 1:5)
-    
+
     write.csv(acf_resid_by_loc, file.path(diag_folder, "acf_resid_by_location.csv"))
-    
+
     # Histograms per lag
     png_plot(file.path(diag_folder, "acf_hist_by_lag.png"), width = 900, height = 600)
     par(mfrow = c(2, 3))
@@ -165,7 +169,7 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
     }
     par(mfrow = c(1, 1))
     dev.off()
-    
+
     # Mean ACF decay curve
     png_plot(file.path(diag_folder, "acf_mean_decay.png"))
     plot(1:5, colMeans(acf_resid_by_loc, na.rm = TRUE), type = "b", pch = 16,
@@ -173,27 +177,27 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
          main = "Average temporal ACF decay of residuals")
     abline(h = 0, col = "red", lty = 2)
     dev.off()
-    
+
     # Boxplot per lag
     png_plot(file.path(diag_folder, "acf_boxplot_by_lag.png"))
     boxplot(acf_resid_by_loc, xlab = "Lag", ylab = "ACF", main = "Residual ACF by lag")
     abline(h = 0, col = "red", lty = 2)
     dev.off()
-    
-    
+
+
     # ---- Spatial autocorrelation of residuals, per year ----
     years <- sort(unique(dat$year_sc))
-    
+
     moran_results <- data.frame(year = years, observed = NA, expected = NA, p_value = NA)
     variogram_results <- list()
-    
+
     for (i in seq_along(years)) {
       yr <- years[i]
       idx <- which(dat$year_sc == yr)
-      
+
       resid_yr <- r2$scaledResiduals[idx]
       coords_yr <- dat[idx, c("longitude", "latitude")]
-      
+
       # Moran's I
       moran <- tryCatch(
         testSpatialAutocorrelation(resid_yr, x = coords_yr$longitude,
@@ -205,7 +209,7 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
         moran_results$expected[i] <- moran$statistic["expected"]
         moran_results$p_value[i]  <- moran$p.value
       }
-      
+
       # Empirical variogram
       df_vg <- data.frame(longitude = coords_yr$longitude,
                           latitude = coords_yr$latitude,
@@ -216,15 +220,15 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
         error = function(e) NULL
       )
     }
-    
+
     write.csv(moran_results, file.path(diag_folder, "spatial_morans_I_by_year.csv"), row.names = FALSE)
     saveRDS(variogram_results, file.path(diag_folder, "spatial_variograms_by_year.rds"))
-    
+
     # Panel of variograms, one per year
     n_years <- length(years)
     ncol_panel <- 4
     nrow_panel <- ceiling(n_years / ncol_panel)
-    
+
     png_plot(file.path(diag_folder, "spatial_variograms_by_year.png"),
         width = 300 * ncol_panel, height = 250 * nrow_panel)
     par(mfrow = c(nrow_panel, ncol_panel), mar = c(4, 4, 2, 1))
@@ -240,13 +244,13 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
     par(mfrow = c(1, 1))
     dev.off()
   }
-  
+
   # ---- Observed vs. fitted ----
   fitted_vals <- tryCatch(predict(mod, type = "response")$est, error = function(e) NULL)
-  
+
   if (!is.null(fitted_vals)) {
     df_plot <- data.frame(fitted = fitted_vals, observed = mod$data$Npp)
-    
+
     # Scatter (semi-transparent points)
     png_plot(file.path(diag_folder, "obs_vs_fitted_scatter.png"))
     plot(df_plot$fitted, df_plot$observed,
@@ -255,7 +259,7 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
          pch = 16, col = rgb(0, 0, 0, 0.3))
     abline(0, 1, col = "red", lwd = 2, lty = 2)
     dev.off()
-    
+
     # Hexbin
     p_hex <- ggplot(df_plot, aes(x = fitted, y = observed)) +
       geom_hex(bins = 50) +
@@ -264,7 +268,7 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
       labs(x = "Fitted values", y = "Observed values", fill = "Count") +
       theme_plain()
     ggsave(file.path(diag_folder, "obs_vs_fitted_hex.png"), p_hex, width = gg_width, height = gg_height, dpi = 300)
-    
+
     # Smoother
     p_smooth <- ggplot(df_plot, aes(x = fitted, y = observed)) +
       geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),
@@ -274,17 +278,15 @@ run_model_diagnostics <- function(mod, mod_name, output_folder) {
       theme_plain()
     ggsave(file.path(diag_folder, "obs_vs_fitted_smooth.png"), p_smooth, width = gg_width, height = gg_height, dpi = 300)
   }
-  
-  invisible(list(ran_pars = ran_pars, fixed_pars = fixed_pars, sanity = sanity_check,
-                 predictions = pred_list, r1 = r1, r2 = r2))
+
+  invisible(list(predictions = pred_list, r1 = r1, r2 = r2)) #ran_pars = ran_pars, fixed_pars = fixed_pars, sanity = sanity_check,
 }
 
 
 # Run across all saved models
 
-output_folder <- "output/output_overnight"
-
-model_files <- list.files(output_folder, pattern = "^mod[0-9a-zA-Z_]+\\.rds$", full.names = FALSE)
+model_files <- list.files(output_folder, pattern = "^vegmod[0-9a-zA-Z_]+\\.rds$", full.names = FALSE)
+model_files <- c("vegmod6_withoutVeglength_20261017") # 
 model_names <- gsub("\\.rds$", "", model_files)
 
 n_ok <- 0
@@ -292,14 +294,21 @@ n_failed <- 0
 
 for (mod_name in model_names) {
   cat("\n--- Running diagnostics for", mod_name, "---\n")
-  
-  mod <- tryCatch(readRDS(file.path(output_folder, paste0(mod_name, ".rds"))), error = function(e) NULL)
-  
+
+  # free the previous iteration BEFORE loading the next model
+  if (exists("mod"))    rm(mod)
+  if (exists("result")) rm(result)
+  invisible(gc())
+  cat("\n---Cleaning finished---\n")
+
+  mod <- tryCatch(readRDS(file.path(output_folder, paste0(mod_name, ".rds"))), error = function(e) { message("MODEL LOADING FAILED: ", conditionMessage(e)); NULL })
+
   if (is.null(mod)) {
     n_failed <- n_failed + 1
     next
   }
-  
+  cat("\n---Loading finished---\n")
+
   result <- tryCatch(
     run_model_diagnostics(mod, mod_name, output_folder),
     error = function(e) {
@@ -307,8 +316,9 @@ for (mod_name in model_names) {
       NULL
     }
   )
-  
+
   if (is.null(result)) n_failed <- n_failed + 1 else n_ok <- n_ok + 1
+  cat("\n---Results finished---\n")
 }
 
 # Notification
