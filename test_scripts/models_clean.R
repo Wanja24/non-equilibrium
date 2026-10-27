@@ -141,8 +141,10 @@ colSums(is.na(df)) # see data coding; fine for now
 #* Subsection 4.2: Outliers ----
 
 # Histograms
+vars <- c("tmmn_mean", "tmmx_mean", "pr_sum", "veg_tmmn_mean", "veg_tmmx_mean", 
+          "veg_pr_sum", "vegetation_length", "elevation_mean", "pr_sum_cv", 
+          "veg_pr_sum_cv")
 vars_num <- c(vars, "year", "Npp", "Npp_cv")
-vars_num
 
 n <- length(vars_num)
 ncol_panel <- 3

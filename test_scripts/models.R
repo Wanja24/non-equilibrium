@@ -141,6 +141,9 @@ colSums(is.na(df)) # see data coding; fine for now
 #* Subsection 4.2: Outliers ----
 
 # Histograms
+vars <- c("tmmn_mean", "tmmx_mean", "pr_sum", "veg_tmmn_mean", "veg_tmmx_mean", 
+          "veg_pr_sum", "vegetation_length", "elevation_mean", "pr_sum_cv", 
+          "veg_pr_sum_cv")
 vars_num <- c(vars, "year", "Npp", "Npp_cv")
 vars_num
 
@@ -462,7 +465,7 @@ points(coords_sample[, c("longitude", "latitude")], col = "red", pch = 16, cex =
 
 # Take a random sample of locations (all years for each sampled location)
 set.seed(123)
-n_sample_locations <- 2000  # adjust as needed
+n_sample_locations <- 4000  # adjust as needed
 locations_sample <- sample(unique(df$location_id), size = n_sample_locations)
 df_sample <- df[df$location_id %in% locations_sample, ]
 nrow(df_sample)                     # resulting row count
@@ -605,6 +608,11 @@ run_time <- end_time - start_time
 print(run_time)
 
 
+start_time <- Sys.time()
+cAIC(mod4)
+end_time <- Sys.time()
+run_time <- end_time - start_time
+print(run_time)
 
 
 # Linear model yearly sdmTMB with space: Version with only 1 year
