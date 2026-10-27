@@ -85,10 +85,10 @@ library(hexbin)    # for hexbin plot
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # Load example dataset
-df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_train_5000px_seed42.parquet")
-scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_5000px_seed42.csv")
+df <- read_parquet("tables_wgs84_allyears/table_wgs84_2002-2023_train_50000px_seed42.parquet")
+scaling_params <- read.csv("tables_wgs84_allyears/scaling_params_train_50000px_seed42.csv")
 
-output_folder <- "output/output_overnight_test"
+output_folder <- "output/output_overnight"
 
 # Check it loaded correctly
 dim(df)             # number of rows/columns
@@ -227,17 +227,16 @@ head(df[, c("location_id", "latitude", "longitude", "year", "year_sc")])
 # nrow(df_sample)
 # length(unique(df_sample$location_id))
 
-df_sample <- df
 
-mesh_fm0 <- fm_mesh_2d(loc = unique(df_sample[, c("longitude", "latitude")]), cutoff = 1)
-mesh_tmb0 <- make_mesh(df_sample, xy_cols = c("longitude", "latitude"), mesh = mesh_fm0)
+mesh_1_fm <- fm_mesh_2d(loc = unique(df[, c("longitude", "latitude")]), cutoff = 1)
+mesh_1 <- make_mesh(df, xy_cols = c("longitude", "latitude"), mesh = mesh_1_fm)
 
 
 # Model registry
 
 model_registry <- list(
   mod0_null = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
@@ -245,14 +244,14 @@ model_registry <- list(
     # data / mesh omitted -> uses defaults
   ),
   mod1_linear = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ tmmx_mean_sc + pr_sum_sc + pr_sum_cv_sc + elevation_mean_sc + year_sc,
     spatial = "on",
     family = tweedie(link = "log"),
     description = "Linear model, space + time"
   ),
   mod2_withoutCV = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       elevation_mean_sc + year_sc,
     spatial = "on",
@@ -260,7 +259,7 @@ model_registry <- list(
     description = "Smoothers k=4, without CV, space + time"
   ),
   mod3_smooth = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
     spatial = "on",
@@ -268,7 +267,7 @@ model_registry <- list(
     description = "Smoothers k=4/4, with CV, space + time"
   ),
   mod4_wiggly = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 8) + elevation_mean_sc + year_sc,
     spatial = "on",
@@ -276,7 +275,7 @@ model_registry <- list(
     description = "Smoothers k=4/8, wigglier CV, space + time"
   ),
   mod5_withoutSpace = list(
-    run = TRUE,
+    run = FALSE,
     formula = Npp ~ poly(tmmx_mean_sc, 2) + s(pr_sum_sc, bs = "cr", k = 4) +
       s(pr_sum_cv_sc, bs = "cr", k = 4) + elevation_mean_sc + year_sc,
     spatial = "off",
@@ -358,8 +357,8 @@ for (mod_name in models_to_run) {
   cat("\n--- Fitting", mod_name, ":", spec$description, "---\n")
   
   # Use the model's own data/mesh if provided, otherwise fall back to defaults
-  mod_data <- if (!is.null(spec$data)) spec$data else df_sample
-  mod_mesh <- if (!is.null(spec$mesh)) spec$mesh else mesh_tmb0
+  mod_data <- if (!is.null(spec$data)) spec$data else df
+  mod_mesh <- if (!is.null(spec$mesh)) spec$mesh else mesh_1
   
   start_time <- Sys.time()
   
@@ -393,8 +392,8 @@ for (mod_name in models_to_run) {
   run_results <- rbind(run_results, data.frame(
     name = mod_name,
     description = spec$description,
-    data_used = if (!is.null(spec$data_name)) spec$data_name else "df_sample (default)",
-    mesh_used = if (!is.null(spec$mesh_name)) spec$mesh_name else "mesh_tmb0 (default)",
+    data_used = if (!is.null(spec$data_name)) spec$data_name else "df (default 50000 locations)",
+    mesh_used = if (!is.null(spec$mesh_name)) spec$mesh_name else "mesh_1 (default cutoff 1)",
     run_time_secs = run_time,
     converged = converged,
     max_gradient = max_gradient,
