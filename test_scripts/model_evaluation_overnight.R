@@ -10,7 +10,7 @@ library(tweedie)  # dtweedie(), tweedie.dev()
 setwd("/Users/Wanja/Documents/non-equilibrium_data")
 
 # 1. Settings ----
-response   <- "Npp"
+response   <- "Npp" # or RUE
 chunk      <- 5e5   # rows per predict() call (limits memory use)
 ll_n       <- 2e5   # rows used for the Tweedie log-likelihood (dtweedie is slow); Inf = all
 
@@ -20,7 +20,7 @@ dir_tab   <- "tables_wgs84_allyears"
 set_names <- c("train", "test1", "test2", "test3")
 
 read_set <- function(name) {
-  f <- sprintf("table_wgs84_2002-2023_%s_5000px_seed42.parquet", name)
+  f <- sprintf("table_wgs84_2002-2023_%s_50000px_seed42.parquet", name)
   as.data.frame(read_parquet(file.path(dir_tab, f)))
 }
 datasets <- setNames(lapply(set_names, read_set), set_names)
@@ -31,8 +31,7 @@ datasets <- setNames(lapply(set_names, read_set), set_names)
 # 3. Load models ----
 # Named list. Add as many models as you like.
 models <- list(
-  mod0 = readRDS("output/output_overnight_test/mod0_20261013.rds"),
-  mod2 = readRDS("output/output_overnight_test/mod2_20261013.rds")
+  vegmod3_smooth = readRDS("output/output_overnight/vegmod3_smooth_20261016.rds")
 )
 
 # `datasets` is shared by all models. If models were trained on different train
@@ -71,7 +70,7 @@ set.seed(1)
 results <- do.call(rbind, lapply(names(models), function(m) {
   do.call(rbind, lapply(names(datasets), function(s) {
     message(format(Sys.time(), "%H:%M:%S"), "  ", m, " on ", s)
-    cbind(model = m, dataset = s, evaluate(models[[m]], datasets[[s]]))
+    cbind(model = m, dataset = s, evaluate(models[[m]], datasets[[s]], response))
   }))
 }))
 
@@ -79,4 +78,4 @@ results <- do.call(rbind, lapply(names(models), function(m) {
 print(results, digits = 4)
 
 stamp <- format(Sys.Date(), "%Y%m%d")
-write.csv(results, sprintf("output/output_overnight_test/model_evaluation_%s.csv", stamp), row.names = FALSE)
+write.csv(results, sprintf("output/output_overnight/model_evaluation_vegmod3_smooth_%s.csv", stamp), row.names = FALSE)
